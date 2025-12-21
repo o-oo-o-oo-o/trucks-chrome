@@ -1,0 +1,33 @@
+{
+    "manifest_version": 3,
+    "name": "311 Truck Report Automation",
+    "version": "1.0",
+    "description": "Automate 311 truck complaint reporting.",
+    "permissions": [
+        "activeTab",
+        "storage",
+        "scripting",
+        "tabs",
+        "unlimitedStorage"
+    ],
+    "host_permissions": [
+        "https://portal.311.nyc.gov/*"
+    ],
+    "action": {
+        "default_popup": "popup.html"
+    },
+    "background": {
+        "service_worker": "background.js"
+    },
+    "content_scripts": [
+        {
+            "matches": [
+                "https://portal.311.nyc.gov/*"
+            ],
+            "js": [
+                "content.js"
+            ],
+            "run_at": "document_idle"
+        }
+    ]
+}

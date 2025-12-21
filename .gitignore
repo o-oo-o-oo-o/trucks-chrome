@@ -1,0 +1,11 @@
+notes/
+media/
+test-results/
+node_modules/
+realtimetraffic/media/*
+realtimetraffic/archived/*
+realtimetraffic/notes/*
+.DS_Store
+playwright/.env
+package/*
+!package/.keep
