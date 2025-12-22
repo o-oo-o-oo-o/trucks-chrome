@@ -25,12 +25,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         console.log("Waiting for user to solve captcha...");
     } else if (message.action === 'SUBMISSION_SUCCESS') {
         console.log("Submission successful detected!");
+
+        if (!batchState.queue || batchState.queue.length === 0) {
+            console.error("[Background] CRITICAL: Queue is empty or lost! Service worker might have suspended.");
+            // Optional: try to recover if we persisted state? 
+            // For now, just log it clearly.
+        }
+
         // Wait a bit then process next
         setTimeout(() => {
             batchState.currentIndex++;
             processNext();
         }, 3000);
     }
+}, 3000);
+    } else if (message.action === 'PING') {
+    console.log("[Background] PING received. Keeping alive.");
+    sendResponse({ status: 'alive' });
+}
 });
 
 function stopBatch() {

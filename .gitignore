@@ -11,3 +11,5 @@ package/*
 !package/.keep
 chrome-media/*
 !chrome-media/.keep
+chrome-submitted/*
+!chrome-submitted/.keep

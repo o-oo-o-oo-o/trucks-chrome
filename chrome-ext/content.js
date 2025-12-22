@@ -23,11 +23,26 @@ async function runAutomation(data) {
 
     const MAX_RETRIES = 20; // 10 seconds
 
+    console.log("[Content] Starting runAutomation loop...");
+
     for (let i = 0; i < MAX_RETRIES; i++) {
+        console.log(`[Content] Loop ${i + 1}/${MAX_RETRIES} checking page state...`);
+
+        // --- SUCCESS PAGE CHECK ---
+        const successText = "Your complaint has been received by the New York City Police Department";
+        if (document.body.innerText.includes(successText) ||
+            document.body.innerText.includes("Service Request Submitted")) {
+            console.log("[Content] Success text detected on new page load!");
+            chrome.runtime.sendMessage({ action: 'SUBMISSION_SUCCESS' });
+            return;
+        }
+
         // --- PAGE 1: DETAILS (Has File Input) ---
         const fileInput = document.querySelector('input[type="file"]');
         if (fileInput) {
+            console.log("[Content] Detected Page 1 (File Input)");
             if (window.hasFilledPage1) {
+                console.log("[Content] Already filled Page 1, skipping.");
                 return;
             }
             window.hasFilledPage1 = true;
@@ -38,7 +53,9 @@ async function runAutomation(data) {
         // --- PAGE 2: LOCATION (Has Location Type Select) ---
         const locSelect = document.getElementById("n311_locationtypeid_select");
         if (locSelect) {
+            console.log("[Content] Detected Page 2 (Location Select)");
             if (window.hasFilledPage2) {
+                console.log("[Content] Already filled Page 2, skipping.");
                 return;
             }
             window.hasFilledPage2 = true;
@@ -49,7 +66,9 @@ async function runAutomation(data) {
         // --- PAGE 3: CONTACT (Has Contact Name Input) ---
         const contactInput = document.getElementById("n311_contactfirstname");
         if (contactInput) {
+            console.log("[Content] Detected Page 3 (Contact Input)");
             if (window.hasFilledPage3) {
+                console.log("[Content] Already filled Page 3, skipping.");
                 return;
             }
             window.hasFilledPage3 = true;
@@ -60,7 +79,9 @@ async function runAutomation(data) {
         // --- START PAGE (Has Report Link) ---
         const reportLink = document.querySelector('a.contentaction');
         if (reportLink && reportLink.textContent.toLowerCase().includes("report a truck")) {
+            console.log("[Content] Detected Start Page (Report Link)");
             if (window.hasClickedStartLink) {
+                console.log("[Content] Already clicked start link, skipping.");
                 return;
             }
             window.hasClickedStartLink = true;
@@ -71,7 +92,7 @@ async function runAutomation(data) {
         // Wait and retry
         await wait(500);
     }
-
+    console.log("[Content] Timed out waiting for recognizable page state.");
 }
 
 async function fillPage1(data) {
@@ -205,10 +226,28 @@ async function fillPage3(data) {
 }
 
 function startSuccessPoller() {
+    console.log("[Content] Starting success poller (setInterval)...");
+    let checks = 0;
     const interval = setInterval(() => {
+        checks++;
+        if (checks % 5 === 0) console.log(`[Content] Poller check #${checks}...`);
+
+        // Send PING to keep background alive every ~20 seconds (checks runs every 1s)
+        if (checks % 20 === 0) {
+            console.log("[Content] Sending PING to background...");
+            chrome.runtime.sendMessage({ action: 'PING' });
+        }
+
         // Check for success text or URL
-        if (document.body.innerText.includes("Service Request Submitted") || window.location.href.includes("submitted")) {
+        // We look for specific confirmation text from 311 
+        const successText = "Your complaint has been received by the New York City Police Department";
+
+        if (document.body.innerText.includes(successText) ||
+            document.body.innerText.includes("Service Request Submitted") ||
+            window.location.href.includes("submitted")) {
+
             clearInterval(interval);
+            console.log("[Content] Success text detected by poller. Notifying background.");
             chrome.runtime.sendMessage({ action: 'SUBMISSION_SUCCESS' });
         }
     }, 1000);
