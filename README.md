@@ -4,11 +4,12 @@ This extension automates the submission of NYC 311 complaints for trucks on non-
 
 ## Installation
 
+0. Click the green Code button, then Download ZIP, then unzip the zipfile.
 1. Open Google Chrome.
 2. Navigate to `chrome://extensions`.
 3. Enable **Developer mode** (toggle in top right).
 4. Click **Load unpacked**.
-5. Select this `chrome-ext` directory.
+5. Select the `trucks-chrome` folder that was inside the zip file you unzipped in step 0.
 
 ## Usage
 
@@ -27,7 +28,6 @@ This extension automates the submission of NYC 311 complaints for trucks on non-
 3. **Automation Process**:
    - The extension will open a new tab to the 311 portal.
    - It will automatically upload the image, set the date/time, and fill out the form.
-   - If Traffic Cam images were provided and a match is found (within 10 mins), a popup will appear *inside the webpage* asking you to confirm the match.
    - **CAPTCHA**: The automation will pause when it reaches the Captcha/Submit step.
    - **Manually solve the Captcha and click Submit**.
    - The extension detects the "Service Request Submitted" confirmation and automatically proceeds to the next file in the queue.
