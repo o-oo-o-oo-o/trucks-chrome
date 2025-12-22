@@ -1,142 +1,218 @@
-let batchState = {
-    running: false,
-    queue: [], // Array of { truckFile: File, trafficCamFile: File | null } - NOTE: File objects can't be stored in background easily if service worker suspends?
-    // Actually, in Manifest V3, Service Workers are ephemeral. We should keep the data mostly in the client side or use chrome.storage if serializable? 
-    // File objects are NOT serializable to storage.
-    // We will try to keep them in memory. If the SW dies, the batch dies. This is a known limitation.
-    // We can try `chrome.runtime.onConnect` (Long Lived Connection) from the popup to keep the SW alive, 
-    // BUT if the user closes the popup, the connection closes.
-    // Ideally, the user keeps the browser open.
+// background.js - Persistent Batch Handling using chrome.storage.local
 
-    currentIndex: 0,
-    currentTabId: null
-};
+// --- STATE MANAGEMENT ---
 
-// Keep alive helper?
-// For now, we'll assume standard flow.
-
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (message.action === 'START_BATCH') {
-        handleStartBatch(message.data);
-    } else if (message.action === 'STOP_BATCH') {
-        stopBatch();
-    } else if (message.action === 'FORM_FILLED_WAITING_CAPTCHA') {
-        // Notify user?
-        console.log("Waiting for user to solve captcha...");
-    } else if (message.action === 'SUBMISSION_SUCCESS') {
-        console.log("Submission successful detected!");
-
-        if (!batchState.queue || batchState.queue.length === 0) {
-            console.error("[Background] CRITICAL: Queue is empty or lost! Service worker might have suspended.");
-            // Optional: try to recover if we persisted state? 
-            // For now, just log it clearly.
-        }
-
-        // Wait a bit then process next
-        setTimeout(() => {
-            batchState.currentIndex++;
-            processNext();
-        }, 3000);
-    } else if (message.action === 'PING') {
-        console.log("[Background] PING received. Keeping alive.");
-        sendResponse({ status: 'alive' });
-    }
-});
-
-function stopBatch() {
-    batchState.running = false;
-    batchState.currentTabId = null;
-    console.log("Batch stopped.");
+/**
+ * Validates and retrieves current batch state from storage.
+ * @returns {Promise<{running: boolean, queue: Array, currentIndex: number, currentTabId: number|null, settings: Object}>}
+ */
+async function getBatchState() {
+    return new Promise((resolve) => {
+        chrome.storage.local.get(['batchState'], (result) => {
+            resolve(result.batchState || {
+                running: false,
+                queue: [],
+                currentIndex: 0,
+                currentTabId: null,
+                settings: {}
+            });
+        });
+    });
 }
 
+/**
+ * Saves the batch state to storage.
+ * @param {Object} state 
+ */
+async function setBatchState(state) {
+    return new Promise((resolve) => {
+        chrome.storage.local.set({ batchState: state }, () => {
+             resolve();
+        });
+    });
+}
+
+// --- MESSAGE LISTENERS ---
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    // Return true to indicate async response for PING or others if needed
+    if (message.action === 'PING') {
+        console.log("[Background] PING received.");
+        sendResponse({ status: 'alive' });
+        return false; 
+    }
+
+    handleMessage(message, sender, sendResponse);
+    return true; // Keep channel open for async handlers
+});
+
+async function handleMessage(message, sender, sendResponse) {
+    try {
+        if (message.action === 'START_BATCH') {
+            await handleStartBatch(message.data);
+            sendResponse({ success: true });
+        } else if (message.action === 'STOP_BATCH') {
+            await stopBatch();
+            sendResponse({ success: true });
+        } else if (message.action === 'SUBMISSION_SUCCESS') {
+            console.log("[Background] Submission success reported.");
+            // Wait slight delay before processing next
+            setTimeout(async () => {
+                await advanceBatch();
+            }, 3000);
+            sendResponse({ received: true });
+        } else if (message.action === 'FORM_FILLED_WAITING_CAPTCHA') {
+            console.log("[Background] Form filled, waiting for CAPTCHA.");
+             sendResponse({ received: true });
+        }
+    } catch (e) {
+        console.error("[Background] Message handling error:", e);
+        // sendResponse({ error: e.message }); // Optional
+    }
+}
+
+// --- CORE LOGIC ---
+
 async function handleStartBatch(data) {
-    // data contains the serialized file info? No, we can't pass File objects via JSON message easily if they are large?
-    // Actually sendMessage can handle JSON-compatible. File is not.
-    // We need a way to get the file data.
-    // Strategy: The POPUP reads the files as Base64/DataURL and sends them to background?
-    // If files are many/large, this might crash.
-    // Alternative: The popup keeps the state and drives the background?
-    // If the popup closes, the process stops. This might be acceptable ("Keep this window open").
-    // But the user asked for "Chrome Extension" automation, usually implies background capability.
+    console.log(`[Background] Starting batch with ${data.items.length} items.`);
+    
+    // Initial State
+    const newState = {
+        running: true,
+        queue: data.items,
+        currentIndex: 0,
+        currentTabId: null, // Will be set when created
+        settings: data.settings
+    };
 
-    // Let's rely on the Popup staying open OR passing DataURLs to Background if they fit in memory.
-    // 50 images * 2MB = 100MB. It's heavy but might fit.
+    await setBatchState(newState);
+    await processNext();
+}
 
-    // Better: We send the list of *Metadata* and the Popup acts as a server? 
-    // No, popup is short lived.
+async function stopBatch() {
+    console.log("[Background] Stopping batch.");
+    const state = await getBatchState();
+    state.running = false;
+    state.currentTabId = null;
+    await setBatchState(state);
+}
 
-    // Let's assume the user sends us DataURLs for the files.
-    console.log("Starting batch with " + data.items.length + " items.");
-    batchState.queue = data.items; // Expecting { truckDataUrl, trafficDataUrl, truckName, timestamp }
-    batchState.currentIndex = 0;
-    batchState.running = true;
-    batchState.settings = data.settings;
+async function advanceBatch() {
+    const state = await getBatchState();
+    if (!state.running) return;
 
-    processNext();
+    state.currentIndex++;
+    await setBatchState(state);
+    await processNext();
 }
 
 async function processNext() {
-    if (!batchState.running) return;
-
-    if (batchState.currentIndex >= batchState.queue.length) {
-        console.log("Batch complete!");
-        batchState.running = false;
+    const state = await getBatchState();
+    if (!state.running) {
+        console.log("[Background] Batch not running.");
         return;
     }
 
-    const item = batchState.queue[batchState.currentIndex];
-    console.log("Processing item " + (batchState.currentIndex + 1) + ": " + item.truckName);
-
-    // Navigate to 311 page
-    const ARTICLE_URL = "https://portal.311.nyc.gov/article/?kanumber=KA-01957";
-
-    // Create tab or update existing?
-    if (batchState.currentTabId) {
-        try {
-            await chrome.tabs.update(batchState.currentTabId, { url: ARTICLE_URL, active: true });
-        } catch (e) {
-            // Tab might be closed, create new
-            const tab = await chrome.tabs.create({ url: ARTICLE_URL, active: true });
-            batchState.currentTabId = tab.id;
-        }
-    } else {
-        const tab = await chrome.tabs.create({ url: ARTICLE_URL, active: true });
-        batchState.currentTabId = tab.id;
+    if (state.currentIndex >= state.queue.length) {
+        console.log("[Background] Batch complete!");
+        state.running = false;
+        await setBatchState(state);
+        // Optional notification to user?
+        return;
     }
 
-    // Wait for load is tricky with SPA/navigation. We listen for onUpdated?
-    // We'll set a one-time listener for the tab complete.
+    const item = state.queue[state.currentIndex];
+    console.log(`[Background] Processing item ${state.currentIndex + 1}/${state.queue.length}: ${item.truckName}`);
+
+    const ARTICLE_URL = "https://portal.311.nyc.gov/article/?kanumber=KA-01957";
+
+    // Manage Tab
+    let tabId = state.currentTabId;
+    let tabExists = false;
+
+    if (tabId) {
+        try {
+            const tab = await chrome.tabs.get(tabId);
+            if (tab) tabExists = true;
+        } catch (e) {
+            tabExists = false;
+        }
+    }
+
+    if (tabExists) {
+        // Navigate existing
+        try {
+             await chrome.tabs.update(tabId, { url: ARTICLE_URL, active: true });
+        } catch(e) {
+            console.error("Failed to update tab, creating new one.", e);
+            tabExists = false;
+        }
+    }
+    
+    if (!tabExists) {
+        const tab = await chrome.tabs.create({ url: ARTICLE_URL, active: true });
+        state.currentTabId = tab.id;
+        await setBatchState(state); // Update tab ID in storage
+    }
 }
 
+// --- TAB MONITORING ---
+
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-    if (batchState.running && tabId === batchState.currentTabId && changeInfo.status === 'complete') {
-        // Check if we are on the right domain
-        if (tab.url && tab.url.includes("portal.311.nyc.gov")) {
-            console.log("On 311 portal page, injecting script...");
-            startComplaintFlow(tabId);
-        }
+    if (changeInfo.status === 'complete' && tab.url && tab.url.includes("portal.311.nyc.gov")) {
+        // Check if this is our batch tab
+        checkAndInject(tabId);
     }
 });
 
-async function startComplaintFlow(tabId) {
-    const item = batchState.queue[batchState.currentIndex];
+async function checkAndInject(tabId) {
+    const state = await getBatchState();
+    if (state.running && state.currentTabId === tabId) {
+        console.log("[Background] Target tab loaded. Injecting flow...");
+        // Add small delay to ensure content script is ready/page fully interactive
+        setTimeout(() => startComplaintFlow(tabId, state), 1000);
+    }
+}
 
-    // We need to inject the content script if not already there (manifest handles it but we need to trigger action)
-    // Send message to content script
+async function startComplaintFlow(tabId, state) {
+    // Double check state just in case
+    if (!state) state = await getBatchState();
+    
+    if (!state.running || state.currentIndex >= state.queue.length) return;
+
+    const item = state.queue[state.currentIndex];
+    
+    console.log("[Background] Sending FILL_FORM command.");
+    
     try {
         await chrome.tabs.sendMessage(tabId, {
             action: 'FILL_FORM',
             data: {
                 truckImage: item.truckDataUrl,
-                truckName: item.truckName, // for finding in list?
+                truckName: item.truckName,
                 truckTimestamp: item.truckTimestamp,
                 trafficImage: item.trafficDataUrl,
-                settings: batchState.settings
+                settings: state.settings
             }
         });
     } catch (e) {
-        console.error("Error sending message to content script: ", e);
-        // Maybe script not ready? Retry?
-        setTimeout(() => startComplaintFlow(tabId), 1000);
+        console.error("[Background] Failed to send message to content script (retry in 1s):", e);
+        setTimeout(() => startComplaintFlow(tabId, state), 1000);
     }
 }
+
+// --- INITIALIZATION CHECK ---
+// If the Service Worker restarts, check if we were supposed to be running.
+getBatchState().then(state => {
+    if (state.running) {
+        console.log("[Background] Service Worker woke up. Batch is RUNNING. Resuming monitoring...");
+        // We don't auto-navigate here to avoid loop if the user is just browsing. 
+        // We rely on the user interacting OR the previous flow continuing.
+        // However, if we were in the middle of a "wait for success", we are good.
+        // If we were supposed to be "processing next", we might need to nudge it?
+        // Safe bet: Do nothing, let the PINGs or Events drive it, OR check integrity.
+        
+        // Actually, if we were waiting for the user, we just wait.
+        // If the user submits, content script sends SUBMISSION_SUCCESS -> we advance.
+    }
+});
