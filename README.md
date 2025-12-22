@@ -22,7 +22,6 @@ This extension automates the submission of NYC 311 complaints for trucks on non-
 2. **Run Batch**:
    - Go to the **Run** tab.
    - Click **Select Truck Images** and select all the `.jpg` files you want to process.
-   - (Optional) Click **Select Traffic Cam Images** if you have corresponding evidence files.
    - Click **Start Processing**.
 
 3. **Automation Process**:
