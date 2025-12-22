@@ -37,12 +37,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             batchState.currentIndex++;
             processNext();
         }, 3000);
-    }
-}, 3000);
     } else if (message.action === 'PING') {
-    console.log("[Background] PING received. Keeping alive.");
-    sendResponse({ status: 'alive' });
-}
+        console.log("[Background] PING received. Keeping alive.");
+        sendResponse({ status: 'alive' });
+    }
 });
 
 function stopBatch() {
