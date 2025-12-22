@@ -27,7 +27,7 @@ async function getBatchState() {
 async function setBatchState(state) {
     return new Promise((resolve) => {
         chrome.storage.local.set({ batchState: state }, () => {
-             resolve();
+            resolve();
         });
     });
 }
@@ -39,7 +39,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.action === 'PING') {
         console.log("[Background] PING received.");
         sendResponse({ status: 'alive' });
-        return false; 
+        return false;
     }
 
     handleMessage(message, sender, sendResponse);
@@ -56,14 +56,12 @@ async function handleMessage(message, sender, sendResponse) {
             sendResponse({ success: true });
         } else if (message.action === 'SUBMISSION_SUCCESS') {
             console.log("[Background] Submission success reported.");
-            // Wait slight delay before processing next
-            setTimeout(async () => {
-                await advanceBatch();
-            }, 3000);
+            // Content script already waited 3s.
+            await advanceBatch();
             sendResponse({ received: true });
         } else if (message.action === 'FORM_FILLED_WAITING_CAPTCHA') {
             console.log("[Background] Form filled, waiting for CAPTCHA.");
-             sendResponse({ received: true });
+            sendResponse({ received: true });
         }
     } catch (e) {
         console.error("[Background] Message handling error:", e);
@@ -75,7 +73,7 @@ async function handleMessage(message, sender, sendResponse) {
 
 async function handleStartBatch(data) {
     console.log(`[Background] Starting batch with ${data.items.length} items.`);
-    
+
     // Initial State
     const newState = {
         running: true,
@@ -117,7 +115,12 @@ async function processNext() {
         console.log("[Background] Batch complete!");
         state.running = false;
         await setBatchState(state);
-        // Optional notification to user?
+
+        // Notify user via tab
+        if (state.currentTabId) {
+            chrome.tabs.sendMessage(state.currentTabId, { action: 'BATCH_COMPLETE' })
+                .catch(() => console.log("Could not send completion message (tab closed?)"));
+        }
         return;
     }
 
@@ -142,13 +145,13 @@ async function processNext() {
     if (tabExists) {
         // Navigate existing
         try {
-             await chrome.tabs.update(tabId, { url: ARTICLE_URL, active: true });
-        } catch(e) {
+            await chrome.tabs.update(tabId, { url: ARTICLE_URL, active: true });
+        } catch (e) {
             console.error("Failed to update tab, creating new one.", e);
             tabExists = false;
         }
     }
-    
+
     if (!tabExists) {
         const tab = await chrome.tabs.create({ url: ARTICLE_URL, active: true });
         state.currentTabId = tab.id;
@@ -177,13 +180,13 @@ async function checkAndInject(tabId) {
 async function startComplaintFlow(tabId, state) {
     // Double check state just in case
     if (!state) state = await getBatchState();
-    
+
     if (!state.running || state.currentIndex >= state.queue.length) return;
 
     const item = state.queue[state.currentIndex];
-    
+
     console.log("[Background] Sending FILL_FORM command.");
-    
+
     try {
         await chrome.tabs.sendMessage(tabId, {
             action: 'FILL_FORM',
@@ -211,7 +214,7 @@ getBatchState().then(state => {
         // However, if we were in the middle of a "wait for success", we are good.
         // If we were supposed to be "processing next", we might need to nudge it?
         // Safe bet: Do nothing, let the PINGs or Events drive it, OR check integrity.
-        
+
         // Actually, if we were waiting for the user, we just wait.
         // If the user submits, content script sends SUBMISSION_SUCCESS -> we advance.
     }

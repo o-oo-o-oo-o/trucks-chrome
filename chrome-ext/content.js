@@ -7,6 +7,8 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
             console.error("[Content] Automation error:", e);
             alert("Automation Error: " + e.message);
         }
+    } else if (message.action === 'BATCH_COMPLETE') {
+        alert("Batch Processing Complete!");
     }
 });
 
@@ -29,10 +31,12 @@ async function runAutomation(data) {
         console.log(`[Content] Loop ${i + 1}/${MAX_RETRIES} checking page state...`);
 
         // --- SUCCESS PAGE CHECK ---
+        // --- SUCCESS PAGE CHECK ---
         const successText = "Your complaint has been received by the New York City Police Department";
         if (document.body.innerText.includes(successText) ||
             document.body.innerText.includes("Service Request Submitted")) {
-            console.log("[Content] Success text detected on new page load!");
+            console.log("[Content] Success text detected on new page load! Waiting 3s...");
+            await wait(3000);
             chrome.runtime.sendMessage({ action: 'SUBMISSION_SUCCESS' });
             return;
         }
@@ -247,8 +251,11 @@ function startSuccessPoller() {
             window.location.href.includes("submitted")) {
 
             clearInterval(interval);
-            console.log("[Content] Success text detected by poller. Notifying background.");
-            chrome.runtime.sendMessage({ action: 'SUBMISSION_SUCCESS' });
+            console.log("[Content] Success text detected by poller. Waiting 3s...");
+            setTimeout(() => {
+                console.log("[Content] Notifying background.");
+                chrome.runtime.sendMessage({ action: 'SUBMISSION_SUCCESS' });
+            }, 3000);
         }
     }, 1000);
 }
