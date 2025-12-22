@@ -10,6 +10,7 @@ playwright/.env
 package/*
 !package/.keep
 chrome-media/*
+chrome-ext/*.zip
 !chrome-media/.keep
 chrome-submitted/*
 !chrome-submitted/.keep
