@@ -87,19 +87,21 @@ async function startBatch() {
 
         // Parse Traffic Files
         const trafficFiles = [];
-        for (const file of trafficInput.files) {
-            trafficFiles.push({
-                file: file,
-                name: file.name,
-                timestamp: file.lastModified,
-                dataUrl: null // Wait to read until needed? No, user might close popup. Read now.
-            });
-        }
+        if (trafficInput) {
+            for (const file of trafficInput.files) {
+                trafficFiles.push({
+                    file: file,
+                    name: file.name,
+                    timestamp: file.lastModified,
+                    dataUrl: null // Wait to read until needed? No, user might close popup. Read now.
+                });
+            }
 
-        // Read all traffic files into memory (DataURL)
-        // If too many, this might be slow.
-        for (let i = 0; i < trafficFiles.length; i++) {
-            trafficFiles[i].dataUrl = await readFileAsDataURL(trafficFiles[i].file);
+            // Read all traffic files into memory (DataURL)
+            // If too many, this might be slow.
+            for (let i = 0; i < trafficFiles.length; i++) {
+                trafficFiles[i].dataUrl = await readFileAsDataURL(trafficFiles[i].file);
+            }
         }
 
         // Parse Truck Files

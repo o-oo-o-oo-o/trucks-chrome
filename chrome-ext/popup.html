@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8">
   <title>311 Automation</title>
@@ -9,41 +10,51 @@
       width: 350px;
       padding: 10px;
     }
+
     .tabs {
       display: flex;
       border-bottom: 1px solid #ccc;
       margin-bottom: 10px;
     }
+
     .tab {
       padding: 8px 16px;
       cursor: pointer;
       border: 1px solid transparent;
       border-bottom: none;
     }
+
     .tab.active {
       border-color: #ccc;
       border-radius: 4px 4px 0 0;
       font-weight: bold;
       background: #f9f9f9;
     }
+
     .content {
       display: none;
     }
+
     .content.active {
       display: block;
     }
+
     label {
       display: block;
       margin-top: 10px;
       font-weight: 500;
     }
-    input[type="text"], input[type="email"], input[type="file"] {
+
+    input[type="text"],
+    input[type="email"],
+    input[type="file"] {
       width: 100%;
       padding: 6px;
       margin-top: 4px;
       margin-bottom: 4px;
       box-sizing: border-box;
     }
+
     button {
       background-color: #007bff;
       color: white;
@@ -54,13 +65,16 @@
       width: 100%;
       margin-top: 10px;
     }
+
     button:hover {
       background-color: #0056b3;
     }
+
     button:disabled {
       background-color: #ccc;
       cursor: not-allowed;
     }
+
     #status {
       margin-top: 15px;
       padding: 10px;
@@ -71,6 +85,7 @@
     }
   </style>
 </head>
+
 <body>
 
   <div class="tabs">
@@ -82,10 +97,10 @@
     <h3>Data Source</h3>
     <label for="truck-files">Select Truck Images (Batch)</label>
     <input type="file" id="truck-files" multiple accept="image/jpeg,image/jpg">
-    
-    <label for="traffic-files" style="margin-top: 15px;">Select Traffic Cam Images (Optional)</label>
-    <div style="font-size: 0.8em; color: #666; margin-bottom: 4px;">For matching with truck images.</div>
-    <input type="file" id="traffic-files" multiple accept="image/jpeg,image/jpg">
+
+    <!-- <label for="traffic-files" style="margin-top: 15px;">Select Traffic Cam Images (Optional)</label> -->
+    <!-- <div style="font-size: 0.8em; color: #666; margin-bottom: 4px;">For matching with truck images.</div> -->
+    <!-- <input type="file" id="traffic-files" multiple accept="image/jpeg,image/jpg"> -->
 
     <button id="start-btn">Start Processing</button>
     <button id="stop-btn" style="background-color: #dc3545; display: none;">Stop</button>
@@ -99,10 +114,10 @@
     <label>Last Name <input type="text" id="conf-last-name"></label>
     <label>Email <input type="email" id="conf-email"></label>
     <label>Phone <input type="text" id="conf-phone"></label>
-    
+
     <h3>Observation Location</h3>
     <label>Address <input type="text" id="conf-obs-address" placeholder="e.g. 100 BROADWAY"></label>
-    
+
     <h3>My Address</h3>
     <label>Line 1 <input type="text" id="conf-addr-1"></label>
     <label>City <input type="text" id="conf-city" value="New York"></label>
@@ -114,4 +129,5 @@
 
   <script src="popup.js"></script>
 </body>
+
 </html>
