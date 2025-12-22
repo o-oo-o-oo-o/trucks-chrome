@@ -9,3 +9,5 @@ realtimetraffic/notes/*
 playwright/.env
 package/*
 !package/.keep
+chrome-media/*
+!chrome-media/.keep
