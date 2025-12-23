@@ -23,6 +23,7 @@ async function runAutomation(data) {
 
     // DETECT PAGE STATE WITH POLLING
 
+
     const MAX_RETRIES = 20; // 10 seconds
 
     console.log("[Content] Starting runAutomation loop...");
@@ -153,6 +154,7 @@ async function fillPage1(data) {
     }
 
     // 8. Go to Next Page
+    await randomDelay(1000, 3000);
     await clickNext();
 }
 
@@ -192,6 +194,7 @@ async function fillPage2(data) {
 
     // Next
     await wait(1000); // UI delay
+    await randomDelay(1000, 3000);
     await clickNext();
 }
 
@@ -219,6 +222,7 @@ async function fillPage3(data) {
     setVal("n311_portalcustomeraddresszip", s.myZip);
 
     // Next
+    await randomDelay(1000, 3000);
     await clickNext();
 
 
@@ -258,6 +262,12 @@ function startSuccessPoller() {
             }, 3000);
         }
     }, 1000);
+}
+
+async function randomDelay(min, max) {
+    const delay = Math.floor(Math.random() * (max - min + 1)) + min;
+    console.log(`[Content] Random delay: ${delay}ms`);
+    await wait(delay);
 }
 
 // ---- HELPERS ----

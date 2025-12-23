@@ -129,34 +129,37 @@ async function processNext() {
 
     const ARTICLE_URL = "https://portal.311.nyc.gov/article/?kanumber=KA-01957";
 
-    // Manage Tab
-    let tabId = state.currentTabId;
-    let tabExists = false;
+    // 1. Clear Cookies for a fresh session
+    console.log("[Background] Clearing cookies...");
+    const cookies = await chrome.cookies.getAll({ domain: "portal.311.nyc.gov" });
+    for (const cookie of cookies) {
+        const url = "https://" + cookie.domain.replace(/^\./, "") + cookie.path;
+        await chrome.cookies.remove({ url: url, name: cookie.name });
+    }
 
+    // 2. Close existing tab if any
+    let tabId = state.currentTabId;
     if (tabId) {
         try {
-            const tab = await chrome.tabs.get(tabId);
-            if (tab) tabExists = true;
+            await chrome.tabs.remove(tabId);
+            console.log("[Background] Closed previous tab:", tabId);
         } catch (e) {
-            tabExists = false;
+            console.log("[Background] Previous tab already closed or invalid.");
         }
+        state.currentTabId = null;
+        await setBatchState(state);
     }
 
-    if (tabExists) {
-        // Navigate existing
-        try {
-            await chrome.tabs.update(tabId, { url: ARTICLE_URL, active: true });
-        } catch (e) {
-            console.error("Failed to update tab, creating new one.", e);
-            tabExists = false;
-        }
-    }
+    // 3. Random Delay before opening new tab (2s - 5s)
+    const delay = Math.floor(Math.random() * 3000) + 2000;
+    console.log(`[Background] Waiting ${delay}ms before opening new tab...`);
+    await new Promise(r => setTimeout(r, delay));
 
-    if (!tabExists) {
-        const tab = await chrome.tabs.create({ url: ARTICLE_URL, active: true });
-        state.currentTabId = tab.id;
-        await setBatchState(state); // Update tab ID in storage
-    }
+    // 4. Create New Tab
+    console.log("[Background] Opening new tab...");
+    const tab = await chrome.tabs.create({ url: ARTICLE_URL, active: true });
+    state.currentTabId = tab.id;
+    await setBatchState(state);
 }
 
 // --- TAB MONITORING ---

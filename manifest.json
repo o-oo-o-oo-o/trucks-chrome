@@ -8,7 +8,8 @@
         "storage",
         "scripting",
         "tabs",
-        "unlimitedStorage"
+        "unlimitedStorage",
+        "cookies"
     ],
     "host_permissions": [
         "https://portal.311.nyc.gov/*"
