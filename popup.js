@@ -4,6 +4,9 @@ document.addEventListener('DOMContentLoaded', () => {
     setupEventHandlers();
 });
 
+const DEFAULT_DESCRIPTION = "Truck observed using a non-truck route. The vehicle clearly has at least six tires and as such is unambiguously a truck rather than merely a commercial vehicle. It's also clearly a construction vehicle and as such is clearly not conducting business or making deliveries on Clinton Street. These complaints will not stop until the problem is solved. My energy and resources for submitting complaints are boundless.\n";
+
+
 function setupTabs() {
     const tabs = document.querySelectorAll('.tab');
     tabs.forEach(tab => {
@@ -37,6 +40,10 @@ async function loadSettings() {
     setVal('conf-city', s.myCity || 'New York');
     setVal('conf-state', s.myState || 'NY');
     setVal('conf-zip', s.myZip);
+
+    // Description is in Run tab, but we load it from settings
+    const desc = s.description !== undefined ? s.description : DEFAULT_DESCRIPTION;
+    document.getElementById('complaint-description').value = desc;
 }
 
 function setVal(id, val) {
@@ -48,6 +55,7 @@ function getVal(id) {
 }
 
 async function saveSettings() {
+    // We also save the description from the run tab
     const settings = {
         firstName: getVal('conf-first-name'),
         lastName: getVal('conf-last-name'),
@@ -58,6 +66,7 @@ async function saveSettings() {
         myCity: getVal('conf-city'),
         myState: getVal('conf-state'),
         myZip: getVal('conf-zip'),
+        description: document.getElementById('complaint-description').value
     };
 
     await chrome.storage.local.set({ settings });
@@ -80,7 +89,16 @@ async function startBatch() {
     try {
         // Read settings again to be sure
         const raw = await chrome.storage.local.get(['settings']);
-        const settings = raw.settings;
+        const settings = raw.settings || {};
+
+        // Grab description from UI (override whatever was in storage, and save it)
+        const currentDesc = document.getElementById('complaint-description').value;
+        settings.description = currentDesc;
+        settings.isDefaultDescription = (currentDesc.trim() === DEFAULT_DESCRIPTION.trim());
+
+        // Auto-save settings including description on start
+        await chrome.storage.local.set({ settings });
+
         if (!settings || !settings.observationAddress) {
             throw new Error("Please configure settings first (Observation Address is required).");
         }

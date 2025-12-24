@@ -137,9 +137,17 @@ async function fillPage1(data) {
 
     // 7. Fill Description
     const obsText = formatObservedSummary(observedDate);
-    let descBody = "Truck observed using a non-truck route.\n";
 
-    if (trafficCamInfo) {
+    // Use the description from settings, passed from the launcher
+    let descBody = data.settings && data.settings.description
+        ? data.settings.description
+        : "Truck observed using a non-truck route. The vehicle clearly has at least six tires and as such is unambiguously a truck rather than merely a commercial vehicle. It's also clearly a construction vehicle and as such is clearly not conducting business or making deliveries on Clinton Street. These complaints will not stop until the problem is solved. My energy and resources for submitting complaints are boundless.\n";
+
+    // Only overwrite with special traffic-cam text IF we have traffic info AND the user hasn't customized the text
+    // (We assume if the user changed the text, they want THAT text used, even if there's a match)
+    const isDefaultDesc = data.settings && data.settings.isDefaultDescription;
+
+    if (trafficCamInfo && isDefaultDesc) {
         // Calculate diff
         const diffMs = data.truckTimestamp - trafficCamInfo.timestamp;
         const minutes = Math.ceil(diffMs / 60000);
