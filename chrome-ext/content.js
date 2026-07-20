@@ -311,10 +311,10 @@ async function handleReview(data) {
     if (yes) { fireClick(yes); yes.dispatchEvent(new Event('change', { bubbles: true })); }
     await wait(1000);
 
-    // A reCAPTCHA now sits on the Review step, BEFORE the upload page. It must be solved
-    // by a human. Pause here and tell the user what to do; the poller will pick the flow
-    // back up on the attachments upload substep and finish the upload + submit.
-    showCaptchaBanner("Solve the “I'm not a robot” reCAPTCHA, then click Continue. The extension will upload your photo(s) on the next page.");
+    // A reCAPTCHA now sits on the Review step, BEFORE the upload page. Only the checkbox
+    // needs a human; once it's solved the watcher auto-clicks Continue, then uploads the
+    // photo(s) and submits on the following page.
+    showCaptchaBanner("Just solve the “I'm not a robot” reCAPTCHA — the extension takes it from there (uploads your photo and submits).");
 
     chrome.runtime.sendMessage({ action: 'FORM_FILLED_WAITING_CAPTCHA' });
     startPageWatcher(data);
@@ -395,6 +395,14 @@ function isSuccessPage() {
         location.href.includes('submitted');
 }
 
+// The reCAPTCHA writes its token into a hidden textarea in the page DOM once solved;
+// content scripts can read it even though `grecaptcha` itself lives in the page world.
+function getCaptchaToken() {
+    const areas = document.querySelectorAll('textarea[name="g-recaptcha-response"], #g-recaptcha-response');
+    for (const a of areas) if (a.value && a.value.length > 0) return a.value;
+    return null;
+}
+
 function isAttachmentUploadPage() {
     // The upload substep: a file input is present but we are past the Review summary.
     return !!document.querySelector('input[type="file"]') && !findLabel("Do You have Attachments");
@@ -417,7 +425,19 @@ function startPageWatcher(data) {
             return;
         }
 
-        // If the user solved the captcha and advanced to the upload substep, drive it.
+        // On the Review step: as soon as the human solves the reCAPTCHA, auto-click Continue.
+        // (The Continue button is disabled until the captcha is solved, so this is safe.)
+        if (!window.hasClickedContinue && findLabel("Do You have Attachments") && getCaptchaToken()) {
+            const cont = findButton(/^Continue$/i) || findButton(/Complete and Submit/i);
+            if (cont && !cont.disabled) {
+                window.hasClickedContinue = true;
+                console.log("[Content] Captcha solved; auto-clicking Continue.");
+                showCaptchaBanner("reCAPTCHA solved — uploading your photo(s)…");
+                fireClick(cont);
+            }
+        }
+
+        // Once we advance to the upload substep, drive the upload + submit.
         if (!window.hasUploaded && isAttachmentUploadPage()) {
             window.hasUploaded = true;
             handleAttachmentUpload(data).catch(e => console.error(e));
