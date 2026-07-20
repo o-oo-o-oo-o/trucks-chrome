@@ -11,6 +11,7 @@ package/*
 !package/.keep
 chrome-media/*
 chrome-ext/*.zip
+playwright/*.png
 !chrome-media/.keep
 chrome-submitted/*
 !chrome-submitted/.keep
