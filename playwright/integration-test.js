@@ -18,7 +18,9 @@ const TINY_JPG = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAP/////
 const DATA = {
     truckImage: TINY_JPG,
     truckName: "truck-test.jpg",
-    truckTimestamp: new Date("2026-05-08T08:42:00").getTime(),
+    // Yesterday at 12:30 PM: guaranteed in the past, and exercises the noon hour (hr%12===0),
+    // which is the case that regressed (the field silently rejects future times and "12").
+    truckTimestamp: (() => { const d = new Date(Date.now() - 24 * 3600 * 1000); d.setHours(12, 30, 0, 0); return d.getTime(); })(),
     trafficImage: null,
     settings: {
         observationAddress: "165 Clinton Street, Manhattan, NY 10002",

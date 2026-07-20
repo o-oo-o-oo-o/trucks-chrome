@@ -110,7 +110,7 @@ async function fillWhat(data) {
     // 3. Description
     const observedDate = new Date(data.truckTimestamp);
     const obsText = formatObservedSummary(observedDate);
-    let descBody = "Truck observed using a non-truck route. NYPD is misunderstanding the complaint. The truck is not conducting business (making a pickup or delivery) on Clinton Street. It's driving straight through, which is a traffic law violation since Clinton Street is not a designated truck route. I'm a chronic caller because the problem is chronic and 311 explicitly instructs me to submit a new complaint if I observe a new occurrence of the violation.\n";
+    let descBody = "Truck observed using a non-truck route in contradiction of the signage indicating that trucks are not permitted on Clinton Street.";
     const problemText = obsText + descBody;
 
     const descArea = document.getElementById('n311_description');
@@ -127,6 +127,10 @@ async function fillWhat(data) {
 // Drive @vuepic/vue-datepicker entirely with in-page synthetic clicks.
 async function setObservedDateTime(d) {
     const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+    // The field rejects future date-times (you can't observe something in the future).
+    // Photo timestamps are always in the past, but guard against clock skew just in case.
+    if (d.getTime() > Date.now()) d = new Date();
 
     // open
     document.querySelector('input.dp__input').click();
@@ -164,17 +168,21 @@ async function setObservedDateTime(d) {
         timeBtn.click();
         await wait(300);
 
-        let hr = d.getHours();
+        const hr = d.getHours();
         const pm = hr >= 12;
-        let h12 = hr % 12; if (h12 === 0) h12 = 12;
+        // This widget's hour column is 0-11 (noon and midnight are both "00"), with a
+        // separate AM/PM toggle. So the cell to click is hr % 12 — NOT a 1-12 value.
+        // (Using 12 for noon/midnight silently fails: no "12" cell exists, so the whole
+        // selection is discarded and the field reads back empty -> "required" error.)
+        const hrValue = hr % 12;
 
-        // hours (cells may be zero-padded -> match numerically)
+        // hours (cells are zero-padded "00".."11" -> match numerically)
         const hrsOverlay = document.querySelector('[aria-label="Open hours overlay"]');
         if (hrsOverlay) {
             hrsOverlay.click();
             await wait(300);
             const hrCell = Array.from(document.querySelectorAll('.dp__overlay_cell'))
-                .find(c => parseInt((c.textContent || '').trim(), 10) === h12);
+                .find(c => parseInt((c.textContent || '').trim(), 10) === hrValue);
             if (hrCell) hrCell.click();
             await wait(300);
         }
