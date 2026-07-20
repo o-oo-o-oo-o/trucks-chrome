@@ -1,3 +1,10 @@
+// content.js — drives the NYC 311 "Truck Route Complaint" service-request wizard.
+//
+// IMPORTANT: In ~mid-2026 NYC rebuilt the service-request creation form from the old
+// Dynamics 365 server-rendered multi-page form into a Vue single-page-app wizard
+// (steps: What -> Where -> Who -> Review -> attachments substep). This file was
+// rewritten to drive that new flow. See README.md for the human-in-the-loop steps.
+
 // Listen for messages
 chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
     if (message.action === 'FILL_FORM') {
@@ -15,247 +22,405 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
 // Helper to wait
 const wait = (ms) => new Promise(res => setTimeout(res, ms));
 
+// The wizard steps What -> Where -> Who -> Review are SPA route changes inside a SINGLE
+// document (only Article -> What is a real page load). So one FILL_FORM invocation on the
+// What page must drive the whole wizard: this loop keeps processing steps as they appear
+// and does NOT return after each one. Per-step window flags prevent re-processing a step.
 async function runAutomation(data) {
-    // Check for Duplicate Run
-    // We clear these flags if they don't apply to the current page, or rely on unique elements.
-    // Actually, simple guard: if we have done the action for THIS page load, stop.
-    // Since page reloads clear window, we can just use window flags.
-
-    // DETECT PAGE STATE WITH POLLING
-
-    const MAX_RETRIES = 20; // 10 seconds
+    if (window.__truckRunning) { console.log("[Content] runAutomation already active, ignoring."); return; }
+    window.__truckRunning = true;
 
     console.log("[Content] Starting runAutomation loop...");
+    const deadline = Date.now() + 6 * 60 * 1000; // safety cap
 
-    for (let i = 0; i < MAX_RETRIES; i++) {
-        console.log(`[Content] Loop ${i + 1}/${MAX_RETRIES} checking page state...`);
-
-        // --- SUCCESS PAGE CHECK ---
-        // --- SUCCESS PAGE CHECK ---
-        const successText = "Your complaint has been received by the New York City Police Department";
-        if (document.body.innerText.includes(successText) ||
-            document.body.innerText.includes("Service Request Submitted")) {
-            console.log("[Content] Success text detected on new page load! Waiting 3s...");
-            await wait(3000);
-            chrome.runtime.sendMessage({ action: 'SUBMISSION_SUCCESS' });
-            return;
-        }
-
-        // --- PAGE 1: DETAILS (Has File Input) ---
-        const fileInput = document.querySelector('input[type="file"]');
-        if (fileInput) {
-            console.log("[Content] Detected Page 1 (File Input)");
-            if (window.hasFilledPage1) {
-                console.log("[Content] Already filled Page 1, skipping.");
+    try {
+        while (Date.now() < deadline) {
+            // --- SUCCESS PAGE ---
+            if (isSuccessPage()) {
+                console.log("[Content] Success detected! Waiting 3s...");
+                await wait(3000);
+                chrome.runtime.sendMessage({ action: 'SUBMISSION_SUCCESS' });
                 return;
             }
-            window.hasFilledPage1 = true;
-            await fillPage1(data);
-            return;
-        }
 
-        // --- PAGE 2: LOCATION (Has Location Type Select) ---
-        const locSelect = document.getElementById("n311_locationtypeid_select");
-        if (locSelect) {
-            console.log("[Content] Detected Page 2 (Location Select)");
-            if (window.hasFilledPage2) {
-                console.log("[Content] Already filled Page 2, skipping.");
+            // --- REVIEW STEP (has "Do You have Attachments?") ---
+            if (findLabel("Do You have Attachments") && !window.hasHandledReview) {
+                console.log("[Content] Detected Review step");
+                window.hasHandledReview = true;
+                await handleReview(data); // hands off to the captcha watcher
                 return;
             }
-            window.hasFilledPage2 = true;
-            await fillPage2(data);
-            return;
-        }
 
-        // --- PAGE 3: CONTACT (Has Contact Name Input) ---
-        const contactInput = document.getElementById("n311_contactfirstname");
-        if (contactInput) {
-            console.log("[Content] Detected Page 3 (Contact Input)");
-            if (window.hasFilledPage3) {
-                console.log("[Content] Already filled Page 3, skipping.");
+            // --- ATTACHMENTS UPLOAD SUBSTEP (after captcha + Continue) ---
+            if (isAttachmentUploadPage() && !window.hasUploaded) {
+                console.log("[Content] Detected attachments upload substep");
+                window.hasUploaded = true;
+                await handleAttachmentUpload(data);
                 return;
             }
-            window.hasFilledPage3 = true;
-            await fillPage3(data);
-            return;
-        }
 
-        // --- START PAGE (Has Report Link) ---
-        const reportLink = document.querySelector('a.contentaction');
-        if (reportLink && reportLink.textContent.toLowerCase().includes("report a truck")) {
-            console.log("[Content] Detected Start Page (Report Link)");
-            if (window.hasClickedStartLink) {
-                console.log("[Content] Already clicked start link, skipping.");
-                return;
+            // --- WHAT STEP (vue datepicker + description) ---
+            if (document.querySelector('input.dp__input') && document.getElementById('n311_description') && !window.hasFilledWhat) {
+                console.log("[Content] Detected What step");
+                window.hasFilledWhat = true;
+                await fillWhat(data);
+                // do NOT return — keep looping for the next SPA step
             }
-            window.hasClickedStartLink = true;
-            reportLink.click();
-            return;
-        }
+            // --- WHERE STEP (address picker) ---
+            else if ((document.getElementById('SelectAddressWhere') || document.getElementById('address-search-box-input')) && !window.hasFilledWhere) {
+                console.log("[Content] Detected Where step");
+                window.hasFilledWhere = true;
+                await fillWhere(data);
+            }
+            // --- WHO STEP (contact name input) ---
+            else if (document.getElementById('n311_contactfirstname') && !window.hasFilledWho) {
+                console.log("[Content] Detected Who step");
+                window.hasFilledWho = true;
+                await fillWho(data);
+            }
+            // --- START PAGE (KB article; separate document) ---
+            else if (!window.hasClickedStartLink) {
+                const reportLink = document.querySelector('a.contentaction');
+                if (reportLink && reportLink.textContent.toLowerCase().includes("report a truck")) {
+                    console.log("[Content] Detected Start Page (Report Link)");
+                    window.hasClickedStartLink = true;
+                    reportLink.click();
+                    return; // What loads as a fresh document; FILL_FORM fires again there
+                }
+            }
 
-        // Wait and retry
-        await wait(500);
+            await wait(500);
+        }
+        console.log("[Content] runAutomation timed out.");
+    } finally {
+        window.__truckRunning = false;
     }
-    console.log("[Content] Timed out waiting for recognizable page state.");
 }
 
-async function fillPage1(data) {
-    // Wait for the form to load (the 'Add Attachment' button is a good indicator)
-    await waitForElement("#attachments-addbutton", 15000);
+// ---- STEP: WHAT ----
 
-    // 2. Upload Truck Image
-    await uploadFile("#attachments-addbutton", data.truckImage, data.truckName);
+async function fillWhat(data) {
+    // 1. Date/Time Observed (drive the readonly vue-datepicker)
+    await waitForElement('input.dp__input', 15000);
+    await setObservedDateTime(new Date(data.truckTimestamp));
 
-    // 3. Traffic Cam Logic
-    let trafficCamInfo = null;
-    if (data.trafficCandidates && data.trafficCandidates.length > 0) {
-        // Show modal to select
-        const selected = await showTrafficCamModal(data.truckImage, data.trafficCandidates);
-        if (selected) {
-            await uploadFile("#attachments-addbutton", selected.dataUrl, selected.name);
-            trafficCamInfo = selected;
-        }
-    } else if (data.trafficImage) {
-        // Backward compatibility if single image passed
-        await uploadFile("#attachments-addbutton", data.trafficImage, "traffic-cam.jpg");
-    }
+    // 2. Recurring problem = Yes (radios have no aria-label anymore; value "true" = Yes)
+    setRecurringYes();
 
-    // 4. Set Time Observed
+    // 3. Description
     const observedDate = new Date(data.truckTimestamp);
-    // Wait for date inputs
-    await waitForElement("#n311_datetimeobserved_datepicker_description", 15000);
-    await setObservedDateTimeOnPage(observedDate);
-
-    // 5. Fill Recurring
-    await waitForElement('input[type="radio"]', 10000);
-    setRadioByLabel("Yes");
-
-    // 6. Fill Days/Times
-    await waitForElement('textarea[id*="describethedaysandtimestheproblemhappens"]', 10000);
-    document.querySelector('textarea[id*="describethedaysandtimestheproblemhappens"]').value = "all day, every day, but especially weekday mornings";
-
-    // 7. Fill Description
     const obsText = formatObservedSummary(observedDate);
     let descBody = "Truck observed using a non-truck route. NYPD is misunderstanding the complaint. The truck is not conducting business (making a pickup or delivery) on Clinton Street. It's driving straight through, which is a traffic law violation since Clinton Street is not a designated truck route. I'm a chronic caller because the problem is chronic and 311 explicitly instructs me to submit a new complaint if I observe a new occurrence of the violation.\n";
-
-    if (trafficCamInfo) {
-        // Calculate diff
-        const diffMs = data.truckTimestamp - trafficCamInfo.timestamp;
-        const minutes = Math.ceil(diffMs / 60000);
-        descBody = `Truck observed using a non-truck route. The same truck is visible on the Williamsburg Bridge just ${minutes} minutes earlier, demonstrating that it passed straight through Clinton Street without stopping for any local business, which is a traffic law violation since Clinton Street is not a designated truck route. I'm a chronic caller because the problem is chronic and 311 explicitly instructs me to submit a new complaint if I observe a new occurrence of the violation. The complaints will continue until the problem is solved.`;
-    }
-
     const problemText = obsText + descBody;
-    const descArea = await waitForElement('textarea[aria-label="Describe the Problem"], textarea[name*="description"]', 10000);
+
+    const descArea = document.getElementById('n311_description');
     if (descArea) {
-        descArea.value = problemText;
+        setNativeValue(descArea, problemText);
         descArea.dispatchEvent(new Event('input', { bubbles: true }));
+        descArea.dispatchEvent(new Event('change', { bubbles: true }));
     }
 
-    // 8. Go to Next Page
+    await wait(500);
     await clickNext();
 }
 
-async function fillPage2(data) {
-    // Page 2: Location
-    await waitForElement("#n311_locationtypeid_select", 15000);
+// Drive @vuepic/vue-datepicker entirely with in-page synthetic clicks.
+async function setObservedDateTime(d) {
+    const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-    const locSelect = document.getElementById("n311_locationtypeid_select");
-    // Find "Street/Sidewalk"
-    for (let opt of locSelect.options) {
-        if (opt.text === "Street/Sidewalk") {
-            locSelect.value = opt.value;
-            break;
+    // open
+    document.querySelector('input.dp__input').click();
+    await wait(500);
+
+    // Navigate to the target month/year via prev/next arrows (the year overlay is a
+    // huge virtualized list; arrow stepping is reliable for the recent dates we handle).
+    for (let i = 0; i < 240; i++) {
+        const selects = document.querySelectorAll('.dp__month_year_select');
+        if (selects.length < 2) break;
+        const curMonth = MONTHS.indexOf((selects[0].textContent || '').trim());
+        const curYear = parseInt((selects[1].textContent || '').trim(), 10);
+        if (curMonth < 0 || isNaN(curYear)) break;
+        const curIdx = curYear * 12 + curMonth;
+        const tgtIdx = d.getFullYear() * 12 + d.getMonth();
+        if (curIdx === tgtIdx) break;
+        const navs = document.querySelectorAll('.dp__inner_nav'); // [0]=prev, [1]=next
+        if (navs.length < 2) break;
+        (curIdx > tgtIdx ? navs[0] : navs[1]).click();
+        await wait(180);
+    }
+    await wait(200);
+
+    // day cell (skip offset/disabled cells from adjacent months)
+    const day = String(d.getDate());
+    const cell = Array.from(document.querySelectorAll('.dp__cell_inner')).find(c =>
+        (c.textContent || '').trim() === day &&
+        !c.className.includes('offset') && !c.className.includes('disabled'));
+    if (cell) cell.click();
+    await wait(300);
+
+    // time
+    const timeBtn = document.querySelector('[aria-label="Open time picker"]');
+    if (timeBtn) {
+        timeBtn.click();
+        await wait(300);
+
+        let hr = d.getHours();
+        const pm = hr >= 12;
+        let h12 = hr % 12; if (h12 === 0) h12 = 12;
+
+        // hours (cells may be zero-padded -> match numerically)
+        const hrsOverlay = document.querySelector('[aria-label="Open hours overlay"]');
+        if (hrsOverlay) {
+            hrsOverlay.click();
+            await wait(300);
+            const hrCell = Array.from(document.querySelectorAll('.dp__overlay_cell'))
+                .find(c => parseInt((c.textContent || '').trim(), 10) === h12);
+            if (hrCell) hrCell.click();
+            await wait(300);
+        }
+
+        // minutes (overlay is in 5-min steps -> pick nearest)
+        const minOverlay = document.querySelector('[aria-label="Open minutes overlay"]');
+        if (minOverlay) {
+            minOverlay.click();
+            await wait(300);
+            const want = d.getMinutes();
+            const minCells = Array.from(document.querySelectorAll('.dp__overlay_cell'))
+                .map(c => ({ c, v: parseInt((c.textContent || '').trim(), 10) }))
+                .filter(x => !isNaN(x.v));
+            if (minCells.length) {
+                minCells.sort((a, b) => Math.abs(a.v - want) - Math.abs(b.v - want));
+                minCells[0].c.click();
+                await wait(300);
+            }
+        }
+
+        // AM/PM
+        const ampmBtn = document.querySelector('.dp__pm_am_button');
+        if (ampmBtn) {
+            const cur = (ampmBtn.textContent || '').trim();
+            if ((pm && cur === 'AM') || (!pm && cur === 'PM')) ampmBtn.click();
+            await wait(200);
         }
     }
-    locSelect.dispatchEvent(new Event('change', { bubbles: true }));
 
-    // Open Address Modal
-    await waitForElement("#SelectAddressWhere", 15000);
-    document.getElementById("SelectAddressWhere").click();
-    await waitForElement("#address-search-box-input", 15000);
+    // confirm
+    const selectBtn = document.querySelector('.dp__action.dp__select') || document.querySelector('.dp__select');
+    if (selectBtn) selectBtn.click();
+    await wait(400);
+}
 
-    // Type Address (Slowly with verification)
-    const addressInput = document.getElementById("address-search-box-input");
+function setRecurringYes() {
+    const radios = document.querySelectorAll('input[type="radio"][name="n311_isthisarecurringproblem"]');
+    for (const r of radios) {
+        if (r.value === 'true') {
+            r.click();
+            r.dispatchEvent(new Event('change', { bubbles: true }));
+            return;
+        }
+    }
+}
+
+// ---- STEP: WHERE ----
+
+async function fillWhere(data) {
+    // 1. Location Type = Street/Sidewalk. This is a vue-multiselect. Its options only react
+    //    once the control is "activated", and selection fires on the option's `mousedown`
+    //    handler (a plain .click() on the <li> does nothing). So: activate the control, then
+    //    mousedown the option span. Poll for the option since Vue may mount it a beat late.
+    const ms = await waitForElement('.multiselect', 15000);
+    const tags = ms.querySelector('.multiselect__tags') || ms;
+    tags.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
+    const msInput = ms.querySelector('input.multiselect__input');
+    if (msInput) msInput.focus();
+    await wait(300);
+
+    let opt = null;
+    for (let i = 0; i < 30; i++) {
+        opt = Array.from(document.querySelectorAll('.multiselect__option'))
+            .find(el => (el.textContent || '').trim() === 'Street/Sidewalk');
+        if (opt) break;
+        await wait(500);
+    }
+    if (opt) {
+        fireClick(opt);
+        await wait(500);
+    } else {
+        console.error("[Content] Location type option 'Street/Sidewalk' not found");
+    }
+
+    // 2. Open the address picker + type the address (synthetic keystrokes drive the geocoder)
+    const openBtn = document.getElementById('SelectAddressWhere');
+    if (openBtn) { fireClick(openBtn); await wait(1500); }
+
     const addressVal = data.settings.observationAddress;
+    const box = await waitForElement('#address-search-box-input', 15000);
+    await typeSynthetic(box, addressVal);
 
-    await typeSlowly(addressInput, addressVal);
+    // 3. Wait for suggestions and select the first
+    const suggestion = await waitForElement('.vue-address-search-results-item', 15000);
+    fireClick(suggestion);
+    await wait(1500);
 
-    // Wait for suggestions
-    await waitForElement("#suggestion-list-0 .ui-menu-item-wrapper", 15000);
-    // Click first
-    document.querySelector("#suggestion-list-0 .ui-menu-item-wrapper").click();
+    // 4. Confirm ("Select Address" button — no stable id anymore)
+    const confirm = findButton(/^Select Address$/i);
+    if (confirm) fireClick(confirm);
+    await wait(1800);
 
-    // Confirm Map
-    await waitForElement("#SelectAddressMap", 10000);
-    document.getElementById("SelectAddressMap").click();
-
-    // Next
-    await wait(1000); // UI delay
+    // 5. Next
     await clickNext();
 }
 
-async function fillPage3(data) {
-    // Page 3: Contact
-    await waitForElement("#n311_contactfirstname", 15000);
+// ---- STEP: WHO ----
 
+async function fillWho(data) {
+    await waitForElement('#n311_contactfirstname', 15000);
     const s = data.settings;
-    setVal("n311_contactfirstname", s.firstName);
-    setVal("n311_contactlastname", s.lastName);
-    setVal("n311_contactemail", s.email);
-    setVal("n311_contactphone", s.phone);
 
-    setVal("n311_portalcustomeraddressline1", s.myAddress1);
-    // line 2 skipped
-    setVal("n311_portalcustomeraddresscity", s.myCity);
+    setVal('n311_contactfirstname', s.firstName);
+    setVal('n311_contactlastname', s.lastName);
+    setVal('n311_contactemail', s.email);
+    setVal('n311_contactphone', s.phone);
 
-    // State custom select
-    const stateSel = document.getElementById("custom_n311_portalcustomeraddressstate");
-    if (stateSel) {
-        stateSel.value = s.myState;
-        stateSel.dispatchEvent(new Event('change', { bubbles: true }));
+    setVal('n311_portalcustomeraddressline1', s.myAddress1);
+    setVal('n311_portalcustomeraddresscity', s.myCity);
+
+    // State is now a plain <select> with no id; find the one whose options include the state code.
+    if (s.myState) {
+        const stateSel = Array.from(document.querySelectorAll('select'))
+            .find(sel => Array.from(sel.options).some(o => o.value === s.myState));
+        if (stateSel) {
+            stateSel.value = s.myState;
+            stateSel.dispatchEvent(new Event('input', { bubbles: true }));
+            stateSel.dispatchEvent(new Event('change', { bubbles: true }));
+        }
     }
-    setVal("n311_portalcustomeraddressstate", s.myState); // hidden?
-    setVal("n311_portalcustomeraddresszip", s.myZip);
 
-    // Next
+    setVal('n311_portalcustomeraddresszip', s.myZip);
+
+    await wait(500);
     await clickNext();
-
-
-    // Notify background
-    chrome.runtime.sendMessage({ action: 'FORM_FILLED_WAITING_CAPTCHA' });
-
-    // Listen for success (poll for URL)
-    startSuccessPoller();
 }
 
-function startSuccessPoller() {
-    console.log("[Content] Starting success poller (setInterval)...");
-    let checks = 0;
-    const interval = setInterval(() => {
-        checks++;
-        if (checks % 5 === 0) console.log(`[Content] Poller check #${checks}...`);
+// ---- STEP: REVIEW ----
 
-        // Send PING to keep background alive every ~20 seconds (checks runs every 1s)
-        if (checks % 20 === 0) {
-            console.log("[Content] Sending PING to background...");
-            chrome.runtime.sendMessage({ action: 'PING' });
+async function handleReview(data) {
+    // We always have at least the truck photo, so declare attachments = Yes to unlock
+    // the upload substep. (Radios use value NO / YES.)
+    const yes = document.querySelector('input[type="radio"][value="YES"]');
+    if (yes) { fireClick(yes); yes.dispatchEvent(new Event('change', { bubbles: true })); }
+    await wait(1000);
+
+    // A reCAPTCHA now sits on the Review step, BEFORE the upload page. It must be solved
+    // by a human. Pause here and tell the user what to do; the poller will pick the flow
+    // back up on the attachments upload substep and finish the upload + submit.
+    showCaptchaBanner("Solve the “I'm not a robot” reCAPTCHA, then click Continue. The extension will upload your photo(s) on the next page.");
+
+    chrome.runtime.sendMessage({ action: 'FORM_FILLED_WAITING_CAPTCHA' });
+    startPageWatcher(data);
+}
+
+// After the human solves the captcha and clicks Continue, we land on the upload substep.
+// This page is gated behind the reCAPTCHA so it could not be DOM-verified in advance; the
+// upload here is best-effort and tries both a plain file input and the older
+// "Add Attachment" modal pattern. Adjust selectors if 311 differs from this.
+async function handleAttachmentUpload(data) {
+    removeCaptchaBanner();
+
+    const images = [{ dataUrl: data.truckImage, name: data.truckName || 'truck.jpg' }];
+    if (data.trafficImage) images.push({ dataUrl: data.trafficImage, name: 'traffic-cam.jpg' });
+
+    for (const img of images) {
+        try {
+            await uploadOneAttachment(img.dataUrl, img.name);
+        } catch (e) {
+            console.error("[Content] Attachment upload failed:", e);
+            showCaptchaBanner("Automatic upload of \"" + img.name + "\" failed. Please add the photo manually, then submit.");
+        }
+    }
+
+    // Final submit ("Complete and Submit"). If a second captcha appears, the human handles it.
+    await wait(1000);
+    const submitBtn = findButton(/Complete and Submit|Submit/i);
+    if (submitBtn && !submitBtn.disabled) {
+        submitBtn.click();
+    } else {
+        showCaptchaBanner("Photo(s) uploaded. Solve any remaining captcha and click “Complete and Submit”.");
+    }
+
+    startPageWatcher(data);
+}
+
+async function uploadOneAttachment(dataUrl, filename) {
+    // Strategy A: old-style "Add Attachment" button opens a modal with a file input.
+    const addBtn = document.getElementById('attachments-addbutton') ||
+        findButton(/Add Attachment|Add File|Upload/i);
+    if (addBtn) {
+        addBtn.click();
+        await wait(800);
+    }
+
+    // Find a file input (modal or inline).
+    const input = await waitForElement('input[type="file"]', 15000);
+    await setFileInput(input, dataUrl, filename);
+
+    // If a modal confirm button exists, click it; otherwise the inline input auto-adds.
+    const modalBtn = findButton(/^Add Attachment$/i);
+    if (modalBtn) {
+        for (let i = 0; i < 30 && modalBtn.disabled; i++) await wait(500);
+        if (!modalBtn.disabled) modalBtn.click();
+    }
+    await wait(1500);
+}
+
+async function setFileInput(input, dataUrl, filename) {
+    const blob = await (await fetch(dataUrl)).blob();
+    const file = new File([blob], filename, { type: blob.type || 'image/jpeg' });
+    const dt = new DataTransfer();
+    dt.items.add(file);
+    input.files = dt.files;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+// ---- SUCCESS DETECTION ----
+
+function isSuccessPage() {
+    const t = document.body.innerText || '';
+    return t.includes("Your complaint has been received by the New York City Police Department") ||
+        t.includes("Service Request Submitted") ||
+        t.includes("Your Service Request has been submitted") ||
+        /\bSR\d{6,}\b/.test(t) && /submitted|received|thank you/i.test(t) ||
+        location.href.includes('confirmation') ||
+        location.href.includes('submitted');
+}
+
+function isAttachmentUploadPage() {
+    // The upload substep: a file input is present but we are past the Review summary.
+    return !!document.querySelector('input[type="file"]') && !findLabel("Do You have Attachments");
+}
+
+function startPageWatcher(data) {
+    if (window.__truckWatcher) return;
+    console.log("[Content] Starting page watcher...");
+    let checks = 0;
+    window.__truckWatcher = setInterval(() => {
+        checks++;
+        if (checks % 20 === 0) chrome.runtime.sendMessage({ action: 'PING' });
+
+        if (isSuccessPage()) {
+            clearInterval(window.__truckWatcher);
+            window.__truckWatcher = null;
+            removeCaptchaBanner();
+            console.log("[Content] Success detected by watcher. Waiting 3s...");
+            setTimeout(() => chrome.runtime.sendMessage({ action: 'SUBMISSION_SUCCESS' }), 3000);
+            return;
         }
 
-        // Check for success text or URL
-        // We look for specific confirmation text from 311 
-        const successText = "Your complaint has been received by the New York City Police Department";
-
-        if (document.body.innerText.includes(successText) ||
-            document.body.innerText.includes("Service Request Submitted") ||
-            window.location.href.includes("submitted")) {
-
-            clearInterval(interval);
-            console.log("[Content] Success text detected by poller. Waiting 3s...");
-            setTimeout(() => {
-                console.log("[Content] Notifying background.");
-                chrome.runtime.sendMessage({ action: 'SUBMISSION_SUCCESS' });
-            }, 3000);
+        // If the user solved the captcha and advanced to the upload substep, drive it.
+        if (!window.hasUploaded && isAttachmentUploadPage()) {
+            window.hasUploaded = true;
+            handleAttachmentUpload(data).catch(e => console.error(e));
         }
     }, 1000);
 }
@@ -265,243 +430,95 @@ function startSuccessPoller() {
 function setVal(id, val) {
     const el = document.getElementById(id);
     if (el && val) {
-        el.value = val;
+        setNativeValue(el, val);
         el.dispatchEvent(new Event('input', { bubbles: true }));
         el.dispatchEvent(new Event('change', { bubbles: true }));
     }
 }
 
+// Set value via the native setter so Vue/framework bindings notice the change.
+function setNativeValue(el, value) {
+    const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+    if (setter) setter.call(el, value);
+    else el.value = value;
+}
+
 async function clickNext() {
-    const btn = await waitForElement("#NextButton", 10000);
+    const btn = await waitForElement('#NextStepBtn', 10000);
     if (btn) btn.click();
-    else console.error("Next button not found!");
+    else console.error("[Content] Next button (#NextStepBtn) not found!");
 }
 
-function setRadioByLabel(label) {
-    const radios = document.querySelectorAll('input[type="radio"]');
-    for (let r of radios) {
-        const l = r.getAttribute('aria-label');
-        if (l && l === label) {
-            r.click();
-            return;
-        }
-        // Check sibling label
+function findLabel(text) {
+    const needle = text.toLowerCase();
+    return Array.from(document.querySelectorAll('label, legend, h1, h2, h3, span, p'))
+        .find(el => (el.textContent || '').trim().toLowerCase().includes(needle)) || null;
+}
+
+// Dispatch a full synthetic mouse sequence — some Vue components (multiselect options,
+// address suggestions, "Select Address") react to mousedown/mouseup rather than click().
+function fireClick(el) {
+    for (const type of ['mousedown', 'mouseup', 'click']) {
+        el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }));
     }
 }
 
-async function uploadFile(btnSelector, dataUrl, filename) {
-    document.querySelector(btnSelector).click();
+function findButton(regex) {
+    return Array.from(document.querySelectorAll('button, input[type="button"], input[type="submit"], a.btn'))
+        .find(b => regex.test((b.textContent || b.value || '').trim())) || null;
+}
 
-    // Wait for file input - specific selector from Playwright
-    // Also wait 1s for modal animation potentially?
-    await wait(500);
-    const input = await waitForElement('input[type="file"][name="file"]');
-
-    // Create File from DataURL
-    const blob = await (await fetch(dataUrl)).blob();
-    const file = new File([blob], filename, { type: 'image/jpeg' });
-
-    // DataTransfer hack
-    const dt = new DataTransfer();
-    dt.items.add(file);
-    input.files = dt.files;
-
-
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-    input.dispatchEvent(new Event('change', { bubbles: true }));
-
-    // Wait strictly for the "Add Attachment" button
-    const getModalBtn = () => {
-        // Scope to modal-footer to be safe
-        const btns = Array.from(document.querySelectorAll('.modal-footer button'));
-        return btns.find(b => b.textContent.includes("Add Attachment"));
-    };
-
-    let modalBtn = null;
-    // Poll for the button to exist AND be enabled
-    for (let i = 0; i < 30; i++) {
-        modalBtn = getModalBtn();
-        if (modalBtn) {
-            if (!modalBtn.disabled) break;
-        }
-        await wait(500);
+// Type into an input using synthetic events (works for the ESRI address autocomplete).
+async function typeSynthetic(inputElement, text) {
+    inputElement.focus();
+    setNativeValue(inputElement, '');
+    inputElement.dispatchEvent(new Event('input', { bubbles: true }));
+    for (const ch of text) {
+        setNativeValue(inputElement, inputElement.value + ch);
+        inputElement.dispatchEvent(new KeyboardEvent('keydown', { key: ch, bubbles: true }));
+        inputElement.dispatchEvent(new Event('input', { bubbles: true }));
+        inputElement.dispatchEvent(new KeyboardEvent('keyup', { key: ch, bubbles: true }));
+        await wait(60 + Math.random() * 40);
     }
-
-    if (!modalBtn || modalBtn.disabled) {
-        console.error("[Content] Add Attachment button stuck or not found");
-        throw new Error("Add Attachment button not found or not enabled.");
-    }
-
-    modalBtn.click();
-
-    // Wait for row
-    await waitForElement(`tr[data-entity="n311_serviceactivity"]`, 20000);
+    inputElement.dispatchEvent(new Event('change', { bubbles: true }));
 }
 
 function waitForElement(selector, timeout = 10000) {
     return new Promise((resolve, reject) => {
         const el = document.querySelector(selector);
         if (el) return resolve(el);
-
-        const obs = new MutationObserver((mutations, observer) => {
+        const obs = new MutationObserver(() => {
             const el = document.querySelector(selector);
-            if (el) {
-                observer.disconnect();
-                resolve(el);
-            }
+            if (el) { obs.disconnect(); resolve(el); }
         });
-
         obs.observe(document.body, { childList: true, subtree: true });
-
-        setTimeout(() => {
-            obs.disconnect();
-            reject(new Error("Timeout waiting for " + selector));
-        }, timeout);
+        setTimeout(() => { obs.disconnect(); reject(new Error("Timeout waiting for " + selector)); }, timeout);
     });
 }
 
-// Date helpers
-function formatMDYTimeAMPM(date) {
-    const month = date.getMonth() + 1;
-    const day = date.getDate();
-    const year = date.getFullYear();
-    let hours = date.getHours();
-    const minutes = date.getMinutes();
-    const ampm = hours >= 12 ? "PM" : "AM";
-    let hour12 = hours % 12;
-    if (hour12 === 0) hour12 = 12;
-    const mm = minutes.toString().padStart(2, "0");
-    return `${month}/${day}/${year} ${hour12}:${mm} ${ampm}`;
+// ---- On-page captcha banner ----
+
+function showCaptchaBanner(msg) {
+    let el = document.getElementById('truck311-banner');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'truck311-banner';
+        el.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:2147483647;background:#111;color:#fff;padding:14px 20px;font:600 15px/1.4 system-ui,sans-serif;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.4);";
+        document.body.appendChild(el);
+    }
+    el.textContent = "🚚 311 Automation: " + msg;
 }
+
+function removeCaptchaBanner() {
+    const el = document.getElementById('truck311-banner');
+    if (el) el.remove();
+}
+
+// ---- Date formatting ----
 
 function formatObservedSummary(date) {
     const dateStr = date.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
     const timeStr = date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
     return `Observed on ${dateStr} at approximately ${timeStr}.\n`;
-}
-
-async function setObservedDateTimeOnPage(observed) {
-    const hiddenValueBase = observed.toISOString().replace(/\.\d+Z$/, "");
-    const hiddenValue = hiddenValueBase + ".0000000Z";
-    const displayValue = formatMDYTimeAMPM(observed);
-
-    const hidden = document.getElementById("n311_datetimeobserved");
-    const visible = document.getElementById("n311_datetimeobserved_datepicker_description");
-
-    if (visible) {
-        visible.value = displayValue;
-        visible.classList.add("dirty");
-        visible.dispatchEvent(new Event("input", { bubbles: true }));
-        visible.dispatchEvent(new Event("change", { bubbles: true }));
-    }
-
-    if (hidden) {
-        hidden.value = hiddenValue;
-        hidden.dispatchEvent(new Event("input", { bubbles: true }));
-        hidden.dispatchEvent(new Event("change", { bubbles: true }));
-    }
-}
-
-// Modal for Traffic Cam
-async function showTrafficCamModal(truckImgUrl, candidates) {
-    return new Promise(resolve => {
-        // Create UI
-        const div = document.createElement('div');
-        div.style.cssText = "position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.9); z-index:99999; color:white; display:flex; flex-direction:column; align-items:center; padding:20px; overflow:auto;";
-
-        div.innerHTML = `
-          <h2>Select Traffic Cam Match</h2>
-          <div style="display:flex; gap:20px;">
-             <div>
-               <h3>Truck Image</h3>
-               <img src="${truckImgUrl}" style="max-width:400px;">
-             </div>
-             <div>
-               <h3>Candidates</h3>
-               <div id="cam-container" style="display:grid; grid-template-columns:1fr 1fr; gap:10px;"></div>
-             </div>
-          </div>
-          <button id="skip-btn" style="margin-top:20px; padding:10px; font-size:16px;">Skip / None</button>
-        `;
-
-        document.body.appendChild(div);
-
-        const container = div.querySelector('#cam-container');
-
-        candidates.forEach(cand => {
-            const img = document.createElement('img');
-            img.src = cand.dataUrl;
-            img.style.cssText = "width:200px; cursor:pointer; border:2px solid transparent;";
-            img.onclick = () => {
-                document.body.removeChild(div);
-                resolve(cand);
-            };
-            img.onmouseenter = () => img.style.border = "2px solid lime";
-            img.onmouseleave = () => img.style.border = "2px solid transparent";
-
-            const wrapper = document.createElement('div');
-            wrapper.appendChild(img);
-            wrapper.appendChild(document.createTextNode(cand.name));
-            container.appendChild(wrapper);
-        });
-
-        document.getElementById('skip-btn').onclick = () => {
-            document.body.removeChild(div);
-            resolve(null);
-        };
-    });
-}
-
-function waitForElementByText(selector, text, timeout = 10000) {
-    return new Promise((resolve, reject) => {
-        const find = () => Array.from(document.querySelectorAll(selector)).find(el => el.textContent.toLowerCase().includes(text.toLowerCase()));
-
-        const existing = find();
-        if (existing) return resolve(existing);
-
-        const obs = new MutationObserver((mutations, observer) => {
-            const el = find();
-            if (el) {
-                observer.disconnect();
-                resolve(el);
-            }
-        });
-
-        obs.observe(document.body, { childList: true, subtree: true });
-
-        setTimeout(() => {
-            obs.disconnect();
-            reject(new Error("Timeout waiting for text '" + text + "' in " + selector));
-        }, timeout);
-    });
-}
-
-// New helper for typing slowly
-async function typeSlowly(inputElement, text, retries = 3) {
-    // Clear first
-    inputElement.value = "";
-    inputElement.dispatchEvent(new Event('input', { bubbles: true }));
-    inputElement.dispatchEvent(new Event('change', { bubbles: true })); // Some frameworks need this
-
-    for (const char of text) {
-        inputElement.value += char;
-        inputElement.dispatchEvent(new Event('input', { bubbles: true }));
-        // Add a small delay between keystrokes to simulate user typing
-        await wait(50 + Math.random() * 50);
-    }
-
-    // Check if value matches
-    if (inputElement.value !== text) {
-        if (retries > 0) {
-            console.warn(`[Content] Mismatch in typeSlowly: expected "${text}", got "${inputElement.value}". Retrying...`);
-            await wait(500);
-            await typeSlowly(inputElement, text, retries - 1);
-        } else {
-            console.error(`[Content] Failed to type text correctly after multiple attempts.`);
-            throw new Error(`Failed to type text correctly: ${text}`);
-        }
-    } else {
-        // Dispatch final change event
-        inputElement.dispatchEvent(new Event('change', { bubbles: true }));
-    }
 }

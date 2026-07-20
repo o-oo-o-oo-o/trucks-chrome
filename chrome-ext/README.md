@@ -26,13 +26,30 @@ This extension automates the submission of NYC 311 complaints for trucks on non-
 
 3. **Automation Process**:
    - The extension will open a new tab to the 311 portal.
-   - It will automatically upload the image, set the date/time, and fill out the form.
-   - If Traffic Cam images were provided and a match is found (within 10 mins), a popup will appear *inside the webpage* asking you to confirm the match.
-   - **CAPTCHA**: The automation will pause when it reaches the Captcha/Submit step.
-   - **Manually solve the Captcha and click Submit**.
-   - The extension detects the "Service Request Submitted" confirmation and automatically proceeds to the next file in the queue.
+   - It walks the current 311 wizard (**What → Where → Who → Review**): it sets the
+     date/time observed (from each photo's file timestamp), fills the description,
+     selects Location Type "Street/Sidewalk", enters the observation address, and fills
+     your contact info.
+   - On the **Review** step it selects **"Yes"** for attachments and then **pauses** with
+     a black banner across the top of the page.
+   - **CAPTCHA (now mid-flow)**: 311 moved the reCAPTCHA to the Review step, *before* the
+     photo upload. When you see the banner:
+     1. Solve the **"I'm not a robot"** reCAPTCHA.
+     2. Click **Continue**.
+   - On the attachment page that follows, the extension uploads your photo(s) and clicks
+     **Complete and Submit**. If the automatic upload does not take, the banner will ask
+     you to add the photo manually and submit.
+   - The extension detects the submission confirmation and automatically proceeds to the
+     next file in the queue.
 
 ## Notes
 
 - **Do not close the browser** or the batch will be lost (files are held in memory).
 - If the extension stops working, check the Console (Right Click Popup > Inspect, or Developer Tools on the 311 page).
+- **Why this was rewritten (mid-2026):** NYC replaced the old Dynamics 365 multi-page
+  complaint form with a Vue single-page wizard, which broke every selector the old
+  automation used. The date field, location type, address suggestions, "Next"/"Submit"
+  buttons, and the photo-upload step all changed, and the reCAPTCHA moved earlier in the
+  flow. `content.js` now drives the new wizard. The final attachment-upload page sits
+  behind the reCAPTCHA, so its upload logic is best-effort — if 311 changes it, adjust
+  `handleAttachmentUpload` in `content.js`.
