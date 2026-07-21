@@ -1,29 +1,10 @@
 {
-  "name": "playwright",
+  "name": "trucks-311-harness",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "build:exe": "ts-node build.ts"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "description": "Regression harness for the 311 Chrome extension: drives the live NYC 311 form with the extension's real content.js.",
+  "private": true,
   "type": "commonjs",
-  "devDependencies": {
-    "@playwright/test": "^1.56.1",
-    "@types/archiver": "^7.0.0",
-    "@types/fs-extra": "^11.0.4",
-    "@types/node": "^24.10.1",
-    "archiver": "^7.0.1",
-    "fs-extra": "^11.3.3",
-    "pkg": "^5.8.1",
-    "ts-node": "^10.9.2",
-    "typescript": "^5.9.3"
-  },
   "dependencies": {
-    "dotenv": "^17.2.3",
     "patchright": "^1.57.0"
   }
 }
