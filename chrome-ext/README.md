@@ -33,9 +33,9 @@ This extension automates the submission of NYC 311 complaints for trucks on non-
    - On the **Review** step it selects **"Yes"** for attachments and then **pauses** with
      a black banner across the top of the page.
    - **CAPTCHA (now mid-flow)**: 311 moved the reCAPTCHA to the Review step, *before* the
-     photo upload. When you see the banner:
-     1. Solve the **"I'm not a robot"** reCAPTCHA.
-     2. Click **Continue**.
+     photo upload. When you see the banner, **just solve the "I'm not a robot" reCAPTCHA** —
+     that's the only manual step. As soon as it's solved the extension clicks **Continue**
+     for you.
    - On the attachment page that follows, the extension uploads your photo(s) and clicks
      **Complete and Submit**. If the automatic upload does not take, the banner will ask
      you to add the photo manually and submit.
